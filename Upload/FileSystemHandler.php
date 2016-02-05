@@ -2,124 +2,125 @@
 
 namespace Persistence\Upload;
 
-use App; // Laravel -> Factory
-use Illuminate\Filesystem\Filesystem; // Laravel
+use App;
+use Illuminate\Filesystem\Filesystem;
 use Persistence\Upload\UploadableInterface;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
-
-
-/**
- * @todo criar uma interface para facilitar o outro entre outros
- * frameworks OU implementar o armazenamento sem utilizar classes
- * acopladas de cada framework
- */
 
 class FileSystemHandler
 {
     protected $model;
     
     protected $filesystem;
+
+    protected $uploadedFiles;
+
+    protected $uploadConfig;
+
+    const FILENAME_SIZE = 9;
     
     public function __construct()
     {
-        $this->filesystem = App::make("Illuminate\Filesystem\Filesystem"); //new Filesystem();
+        $this->filesystem = App::make("Illuminate\Filesystem\Filesystem");
     }
 
-    /**
-     * Armazena os arquivos enviados para o servidor
-     * @param  UploadableInterface &$model [description]
-     * @return [type]                      [description]
-     */
     public function storeFiles(UploadableInterface &$model)
     {
-        $newFiles = $this->getUploadedFiles($model);
+        $this->model = &$model;
+
+        $this->uploadConfig  = $model->getUploadableFields();
+        $this->uploadedFiles = $this->getUploadedFilesFromModel();
         
-        $originalAttr = $model->getOriginal();
-        $uploadConfig = $model->getUploadableFields();
-
-
-        foreach ($newFiles as $curFile) {
-            //return dd($curFile);
-            if($model->{$curFile} != null && in_array($curFile, $originalAttr) ) $this->removeIfExists($originalAttr[$curFile]);
-            $file = $this->storeFile($model->{$curFile}, $uploadConfig[$curFile]);
-
-            $model->{$curFile} = ($file != null) ? $file : $originalAttr[$curFile] ;
-        }
-
-        $this->checkForNullInput($model);
+        $this->revertNullAttributesToOriginal();
+        $this->storeUploadedFiles();
     }
 
-    /**
-     * Reseta attributos do modelo que foram sobrescritos por valores nulos
-     * @param  [type] &$model [description]
-     * @return [type]         [description]
-     */
-    private function checkForNullInput(&$model)
+    private function getUploadedFilesFromModel()
     {
-        $originalAttr = $model->getOriginal();
+        $uploadableAttributes = $this->model->getUploadableFields();
 
-        foreach($model->getAttributes() as $attr => $value) {
-            if ($value == null) $model->{$attr} = $originalAttr[$attr]; 
+        $collection = Array();
+
+        foreach ($uploadableAttributes as $attributeName => $content) {
+            if (!$this->isModelAttributeNull($attributeName)) {
+                $collection[$attributeName] = $this->model->{$attributeName}; 
+            }
         }
+
+        return $collection;
     }
 
-    /**
-     * Retorna um conjunto com o nome dos campos de arquivo enviados
-     * para o servidor 
-     * @param  [type] $model [description]
-     * @return [type]        [description]
-     */
-    private function getUploadedFiles($model)
+    private function revertNullAttributesToOriginal()
     {
-        $originalAttr = $model->getOriginal();
-        $fileAttr     = $model->getUploadableFields();
-
-        foreach ($fileAttr as $index => $currentAttr) {
-            if ($model->{$index} != null) {
-                yield $index;
+        $attributes = $this->model->getAttributes();
+        
+        foreach ($attributes as $attributeName => $value) {
+            if ($this->isModelAttributeNull($attributeName)) {
+                $this->model->{$attributeName} = $this->model->getOriginal($attributeName);
             }
         }
     }
-
-    /**
-     * Gera um nome para um arquivo enviado de acordo com as regras
-     * providas no modelo
-     * @param  [type] $field [description]
-     * @return [type]        [description]
-     */
-    private function generateFilename($field)
+    
+    private function isModelAttributeNull($attributeName)
     {
-        return str_random(9).".".$field->getClientOriginalExtension();
+        return $this->model->{$attributeName} == null;
     }
-    /**
-     * Apaga arquivo do sistema de arquivos
-     * @param  [type] $currentFile [description]
-     * @return [type]              [description]
-     */
-    public function removeIfExists($currentFile)
+
+    private function isModelOriginalAttributeNull($attributeName)
     {
-        if ($this->filesystem->exists($currentFile)) {
-            $this->filesystem->delete($currentFile);
+        return $this->model->getOriginal($attributeName) == null;
+    }
+
+    private function storeUploadedFiles()
+    {
+        foreach ($this->uploadedFiles as $attributeName => $file) {
+            $storedOldFile = $this->model->getOriginal($attributeName);
+            
+            if (!$this->isModelOriginalAttributeNull($attributeName)) {
+                $this->removeIfExists($storedOldFile);
+            }
+
+            $this->model->{$attributeName} = $this->storeFile($attributeName);
         }
     }
 
-    /**
-     * Armazena arquivo no sistema de arquivos
-     * @param  [type] $file   [description]
-     * @param  [type] $config [description]
-     * @return [type]         [description]
-     */
-    private function storeFile($file, $config)
+    private function removeIfExists($filepath)
     {
-        $class = "Symfony\\Component\\HttpFoundation\\File\\UploadedFile";
-        if (!$file instanceof $class) {
-            return;
+        if ($this->filesystem->exists($filepath)) {
+            $this->filesystem->delete($filepath);
         }
+    }
+    
+    private function generateFilename($attribute)
+    {
+        return str_random(self::FILENAME_SIZE).".".$this->model->{$attribute}->getClientOriginalExtension();
+    }
+
+    private function storeFile($attributeName)
+    {
+        $file = $this->model->{$attributeName};
+
+        if (!$this->isUploadedFileValidInstance($file)) return;
+
+        $filename = $this->generateFilename($attributeName);
+        $dir      = $this->uploadConfig[$attributeName]['directory'];
         
-        $filename = $this->generateFilename($file);
-        $dir      = $config['directory'];
-        
-        $file->move($dir, $filename);
+        $this->model->{$attributeName}->move($dir, $filename);
         return $dir.$filename;
+    }
+
+    private function isUploadedFileValidInstance($file)
+    {
+        $class = 'Symfony\Component\HttpFoundation\File\UploadedFile';
+        return (bool)($file instanceof $class);
+    }
+
+    public function removeAllFiles(UploadableInterface &$model)
+    {
+        $uploadableAttributes = $model->getUploadableFields();
+
+        foreach ($uploadableAttributes as $attribute => $value) {
+            $this->removeIfExists($model->{$attribute});
+        }
     }
 }
