@@ -34,10 +34,10 @@ class ThumbnailGenerator
 
     }
 
-    public function store()
+    /*public function store()
     {
 
-    }
+    }*/
 
     public function extractExtension()
     {
