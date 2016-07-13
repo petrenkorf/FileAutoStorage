@@ -4,13 +4,12 @@ namespace Persistence\Upload;
 
 use App;
 use Illuminate\Filesystem\Filesystem;
-use Persistence\Upload\UploadableInterface;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
+
 
 class FileSystemHandler
 {
     protected $model;
-    
+
     protected $filesystem;
 
     protected $uploadedFiles;
@@ -18,7 +17,7 @@ class FileSystemHandler
     protected $uploadConfig;
 
     const FILENAME_SIZE = 9;
-    
+
     public function __construct()
     {
         $this->filesystem = App::make("Illuminate\Filesystem\Filesystem");
@@ -28,9 +27,9 @@ class FileSystemHandler
     {
         $this->model = &$model;
 
-        $this->uploadConfig  = $model->getUploadableFields();
+        $this->uploadConfig = $model->getUploadableFields();
         $this->uploadedFiles = $this->getUploadedFilesFromModel();
-        
+
         $this->revertNullAttributesToOriginal();
         $this->storeUploadedFiles();
     }
@@ -39,11 +38,11 @@ class FileSystemHandler
     {
         $uploadableAttributes = $this->model->getUploadableFields();
 
-        $collection = Array();
+        $collection = [];
 
         foreach ($uploadableAttributes as $attributeName => $content) {
             if (!$this->isModelAttributeNull($attributeName)) {
-                $collection[$attributeName] = $this->model->{$attributeName}; 
+                $collection[$attributeName] = $this->model->{$attributeName};
             }
         }
 
@@ -53,14 +52,14 @@ class FileSystemHandler
     private function revertNullAttributesToOriginal()
     {
         $attributes = $this->model->getAttributes();
-        
+
         foreach ($attributes as $attributeName => $value) {
             if ($this->isModelAttributeNull($attributeName)) {
                 $this->model->{$attributeName} = $this->model->getOriginal($attributeName);
             }
         }
     }
-    
+
     private function isModelAttributeNull($attributeName)
     {
         return $this->model->{$attributeName} == null;
@@ -75,7 +74,7 @@ class FileSystemHandler
     {
         foreach ($this->uploadedFiles as $attributeName => $file) {
             $storedOldFile = $this->model->getOriginal($attributeName);
-            
+
             if (!$this->isModelOriginalAttributeNull($attributeName)) {
                 $this->removeIfExists($storedOldFile);
             }
@@ -90,29 +89,33 @@ class FileSystemHandler
             $this->filesystem->delete($filepath);
         }
     }
-    
+
     private function generateFilename($attribute)
     {
-        return str_random(self::FILENAME_SIZE).".".$this->model->{$attribute}->getClientOriginalExtension();
+        return str_random(self::FILENAME_SIZE).'.'.$this->model->{$attribute}->getClientOriginalExtension();
     }
 
     private function storeFile($attributeName)
     {
         $file = $this->model->{$attributeName};
 
-        if (!$this->isUploadedFileValidInstance($file)) return;
+        if (!$this->isUploadedFileValidInstance($file)) {
+            return;
+        }
 
         $filename = $this->generateFilename($attributeName);
-        $dir      = $this->uploadConfig[$attributeName]['directory'];
-        
+        $dir = $this->uploadConfig[$attributeName]['directory'];
+
         $this->model->{$attributeName}->move($dir, $filename);
+
         return $dir.$filename;
     }
 
     private function isUploadedFileValidInstance($file)
     {
         $class = 'Symfony\Component\HttpFoundation\File\UploadedFile';
-        return (bool)($file instanceof $class);
+
+        return (bool) ($file instanceof $class);
     }
 
     public function removeAllFiles(UploadableInterface &$model)
